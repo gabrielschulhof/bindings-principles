@@ -143,7 +143,7 @@ Before diving into the process of passing a handle into Javascript we should con
   var x = setTimeout( function() {}, 1000 );
   x = null;
   ```
-  If we overwrite all references to the "magic" value, we have no way of removing the timeout. This is not a big poblem in the case of a timeout, because it will simply run once and then never again. However, in the case of ```setInterval()```, overwriting the return value of the function means that the interval has now leaked, and it's callback will be called repeatedly "forever". Javascript follows this important heuristic and so our code that deals with handles can also be made easier: *If the handle goes out of scope, the resource to which it refers is leaked.*
+  If we overwrite all references to the "magic" value, we have no way of removing the timeout. This is not a big poblem in the case of a timeout, because it will simply run once and then never again. However, in the case of ```setInterval()```, overwriting the return value of the function means that the interval has now leaked, and its callback will be called repeatedly "forever". Javascript follows this important heuristic and so, although V8 allows us to intercept a Javascript value as it is garbage-collected via weak references, our code that deals with handles can also be made easier: *If the handle goes out of scope, the resource to which it refers is leaked.*
 
 Armed with these heuristics, let's create our own handles with the help of NAN:
 ```C++
@@ -267,4 +267,4 @@ Local<Value> arguments[2] = {
 };
 jsCallback->Call(arguments, 2);
 ```
-This is bad. We have just created a second Javascript handle containing the same "magic" pointer as the one we passed into Javascript land during our binding of ```remote_resource_retrieve()```. The way around this is to create a persistent reference to the Javascript handle in our binding for ```remote_resource_set_int_async()``` and pass it, along with the ```Nan::Callback```, which is a persistent reference to the Javascript function that we must call, as the ```void *data``` parameter of the native callback. Read more about this in the <a href="#callbacks">callbacks</a> section.
+This is bad. We have just created a second Javascript handle containing the same "magic" pointer as the one we passed into Javascript land during our binding of ```remote_resource_retrieve()```. The way around this is to create a persistent reference to the Javascript handle in our binding for ```remote_resource_set_int_async()``` and pass it, along with the ```Nan::Callback```, which is a persistent reference to the Javascript function that we must call (```jsCallback``` in the example above), as the ```void *data``` parameter of the native callback. Read more about this in the <a href="#callbacks">callbacks</a> section.
