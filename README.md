@@ -8,7 +8,7 @@ It is best to write as little logic as possible into the bindings itself. Ideall
 
 Of course the underlying language has artifacts that need not be mapped.
 
-  0. For example, C has ```void *user_data``` with its function pointers, but that's only to provide room for context. Javascript is the king of context, so you don't need to map this mechanism into Javascript. OTOH, you need this mechanism for the <a href="#function-pointers">internals of the bindings</a>.
+  0. For example, C has ```void *user_data``` with its function pointers, but that's only to provide room for context. Javascript is the king of context, so you don't need to map this mechanism into Javascript. OTOH, you need this mechanism for the <a href="#callbacks">internals of the bindings</a>.
   0. Another example is pointers that are filled out by the native side. In that case you can have the binding accept an empty object the properties of which it fills out (a receptacle) or you can return a new object you create inside the binding. But what if the native function additionally returns a result code (like ```errno``` for example)? Do you retain one-to-one-ness and use a receptacle object or do you break one-to-one-ness and return an object upon success and an error code otherwise? Do you throw the error code as an exception (again, breaking one-to-one-ness)? Your call.
 
 # General principles
@@ -195,8 +195,7 @@ public:
     // This is how we retrieve the pointer we've stored during instantiation.
     // If the object is not of the expected type, or if the pointer inside the
     // object has already been removed, then we must throw an error.
-    static void *
-    Resolve(v8::Local<v8::Object> jsObject)
+    static void *Resolve(v8::Local<v8::Object> jsObject)
     {
         void *returnValue = 0;
 
@@ -268,3 +267,5 @@ Local<Value> arguments[2] = {
 jsCallback->Call(arguments, 2);
 ```
 This is bad. We have just created a second Javascript handle containing the same "magic" pointer as the one we passed into Javascript land during our binding of ```remote_resource_retrieve()```. The way around this is to create a persistent reference to the Javascript handle in our binding for ```remote_resource_set_int_async()``` and pass it, along with the ```Nan::Callback```, which is a persistent reference to the Javascript function that we must call (```jsCallback``` in the example above), as the ```void *data``` parameter of the native callback. Read more about this in the <a href="#callbacks">callbacks</a> section.
+## Callbacks
+Any non-trivial C API will accept function pointers. The binding for such an API obviously accepts a Javascript function as one of its parameters. There is, at this point, a very important thing you have to keep in mind: C functions are "physical". That is, they are pieces of code which take up room on disk and in memory, and are stored in specially marked segments, protected from modification in all kinds of highly platform-dependent ways. In contrast, Javascript functions are merely pieces of data stored on the heap. Thus, Javascript functions can be created, copied, and destroyed at runtime whereas C functions can only be created at compile time. Thus, we cannot simply create a new C function at runtime to correspond to the Javascript function passed into our binding, to pass to the native API as a callback. Neither can we assume that exactly the same Javascript function will be passed to our binding every time it is called. 
