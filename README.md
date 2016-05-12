@@ -254,7 +254,7 @@ Nan::SetInternalFieldPointer(jsHandle, 0, 0);
 ```
 Since these special objects can only be created using our bindings, we should avoid creating more than one Javascript object for a given native handle so as to avoid the case of stale pointers. The simple remote resource API shown above does not really give us the opportunity to make such a mistake. Let's consider the case where we have the opportunity to create multiple Javascript objects for the same handle, but where we must avoid doing so. Suppose we have an additional C API that has asynchronous completion:
 ```C
-void remote_resource_set_int(RemoteResourceHandle resource, const char *key, int value,
+void remote_resource_set_int_async(RemoteResourceHandle resource, const char *key, int value,
 	void (*completionCallback)(void *data, RemoteResourceHandle c_handle, bool wasSuccessful), void *data);
 ```
 When the native API calls the callback we have provided it, it will, as a convenience, give us the ```c_handle``` as part of the context. Now, when the bindings, in turn, call the Javascript callback provided, if we are to maintain the one-to-one binding, we should pass a JSRemoteResourceHandle to the Javascript callback:
@@ -267,5 +267,16 @@ Local<Value> arguments[2] = {
 jsCallback->Call(arguments, 2);
 ```
 This is bad. We have just created a second Javascript handle containing the same "magic" pointer as the one we passed into Javascript land during our binding of ```remote_resource_retrieve()```. The way around this is to create a persistent reference to the Javascript handle in our binding for ```remote_resource_set_int_async()``` and pass it, along with the ```Nan::Callback```, which is a persistent reference to the Javascript function that we must call (```jsCallback``` in the example above), as the ```void *data``` parameter of the native callback. Read more about this in the <a href="#callbacks">callbacks</a> section.
+
 ## Callbacks
-Any non-trivial C API will accept function pointers. The binding for such an API obviously accepts a Javascript function as one of its parameters. There is, at this point, a very important thing you have to keep in mind: C functions are "physical". That is, they are pieces of code which take up room on disk and in memory, and are stored in specially marked segments, protected from modification in all kinds of highly platform-dependent ways. In contrast, Javascript functions are merely pieces of data stored on the heap. Thus, Javascript functions can be created, copied, and destroyed at runtime whereas C functions can only be created at compile time. Thus, we cannot simply create a new C function at runtime to correspond to the Javascript function passed into our binding, to pass to the native API as a callback. Neither can we assume that exactly the same Javascript function will be passed to our binding every time it is called. 
+Any non-trivial C API will accept function pointers. The binding for such an API obviously accepts a Javascript function as one of its parameters. There is, at this point, a very important thing you have to keep in mind: C functions are "physical". That is, they are pieces of code which take up room on disk and in memory, and are stored in specially marked segments, marked as executable and protected from modification in all kinds of highly platform-dependent ways. In contrast, Javascript functions are merely pieces of data stored on the heap. Thus, Javascript functions can be created, copied, and destroyed at runtime whereas C functions can only be created at compile time. Thus, we cannot simply create a new C function at runtime to correspond to the Javascript function passed into our binding, to pass to the native API as a callback. Neither can we assume that exactly the same Javascript function will be passed to our binding every time it is called. We have no choice but to rely on a C programming artifact called a context or user data. In the above function ```remote_resource_set_int_async()``` it's the ```void *``` pointer which we pass to the API, and which we receive back from the API in the callback.
+
+Most C APIs worth their salt will provide such a parameter. However, if you ever run into one that doesn't, all is not lost, although it has become far more complicated, going well beyond the scope of this reading. Suffice it to say that you can use [ffi][] or, more specifically, the C library it bundles under deps/libffi. Using this library, you can essentially create C functions at runtime such that a function you create
+  0. has the signature required by the native API you are trying to bind,
+  0. stores the context you need in an internal variable, and
+  0. calls a function of your choosing with all the variables it receives from the native callback plus the context.
+
+Another choice is to use trampoline from the GNU [libffcall][] library. Although trampoline looks much more elegant, it is not provided as an npm package, and its GPL v3 license may be difficult to reconcile with the more permissible licenses generally used with npm packages. The bottom line, however, is that if the native API does not provide room for a context, the only solutions left are fairly invasive and highly platfom-specific.
+
+[ffi]: https://github.com/node-ffi/node-ffi
+[libffcall]: https://www.gnu.org/software/libffcall/trampoline.html
