@@ -8,7 +8,7 @@ It is best to write as little logic as possible into the bindings itself. Ideall
 
 Of course the underlying language has artifacts that need not be mapped.
 
-  0. For example, C has ```void *user_data``` with its function pointers, but that's only to provide room for context. Javascript is the king of context, so you don't need to map this mechanism into Javascript. OTOH, you need this mechanism for the <a href="function-pointers">internals of the bindings</a>.
+  0. For example, C has ```void *user_data``` with its function pointers, but that's only to provide room for context. Javascript is the king of context, so you don't need to map this mechanism into Javascript. OTOH, you need this mechanism for the <a href="#function-pointers">internals of the bindings</a>.
   0. Another example is pointers that are filled out by the native side. In that case you can have the binding accept an empty object the properties of which it fills out (a receptacle) or you can return a new object you create inside the binding. But what if the native function additionally returns a result code (like ```errno``` for example)? Do you retain one-to-one-ness and use a receptacle object or do you break one-to-one-ness and return an object upon success and an error code otherwise? Do you throw the error code as an exception (again, breaking one-to-one-ness)? Your call.
 
 # General principles
@@ -212,7 +212,7 @@ public:
 };
 ```
 
-With this class template in a header file we can now create any number of Javascript classes that can be used to pass handles into Javascript land. For our example, we can create declare the class
+With this class template in a header file we can now create any number of Javascript classes that can be used to pass handles into Javascript land. For our example, we can declare the class
 ```C++
 class JSRemoteResourceHandle : public JSHandle<RemoteResourceHandle> {
 public:
@@ -251,4 +251,20 @@ remote_resource_release(c_handle);
 // of handling the case of multiply releasing the same resource, because it
 // informs developers of potential race conditions. Your call.
 Nan::SetInternalFieldPointer(jsHandle, 0, 0);
+...
 ```
+Since these special objects can only be created using our bindings, we should avoid creating more than one Javascript object for a given native handle so as to avoid the case of stale pointers. The simple remote resource API shown above does not really give us the opportunity to make such a mistake. Let's consider the case where we have the opportunity to create multiple Javascript objects for the same handle, but where we must avoid doing so. Suppose we have an additional C API that has asynchronous completion:
+```C
+void remote_resource_set_int(RemoteResourceHandle resource, const char *key, int value,
+	void (*completionCallback)(void *data, RemoteResourceHandle c_handle, bool wasSuccessful), void *data);
+```
+When the native API calls the callback we have provided it, it will, as a convenience, give us the ```c_handle``` as part of the context. Now, when the bindings, in turn, call the Javascript callback provided, if we are to maintain the one-to-one binding, we should pass a JSRemoteResourceHandle to the Javascript callback:
+```C++
+...
+Local<Value> arguments[2] = {
+	JSRemoteResourceHandle::New(c_handle),
+	Nan::New(wasSuccessful)
+};
+jsCallback->Call(arguments, 2);
+```
+This is bad. We have just created a second Javascript handle containing the same "magic" pointer as the one we passed into Javascript land during our binding of ```remote_resource_retrieve()```. The way around this is to create a persistent reference to the Javascript handle in our binding for ```remote_resource_set_int_async()``` and pass it, along with the ```Nan::Callback```, which is a persistent reference to the Javascript function that we must call, as the ```void *data``` parameter of the native callback. Read more about this in the <a href="#callbacks">callbacks</a> section.
