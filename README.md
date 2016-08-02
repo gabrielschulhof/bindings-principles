@@ -1,12 +1,12 @@
-# Writing node.js Bindings - General Principles
+# Writing Node.js Bindings - General Principles
 
-This material is about creating node.js interfaces for native libraries written in C. It is not so much about the mechanics of writing the code, or about the structure of a npm package containing a native addon, but about the various situations you are likely to face when writing addons. It starts with the assumption that it is best to create an addon that provides as little abstraction as possible so as to allow you to provide a Javascript API to the consumers of your project that is itself written in Javascript. The portion of the node.js documentation that describes native addons, the V8 reference, and the reference provided by the Native Abstractions for Node project give you an ample toolset for creating native addons. Once you've managed to create your first native addon, and are ready to bring a complete native library into the node.js world, you will be faced with having to translate the artifacts of the C language into Javascript concepts.  At that point, it pays to be systematic. It is beneficial to break the library's API into constants, enums, structures, and functions, and bind each onto the node.js module you are creating in as automated a fashion as possible. In this material, I will describe some patterns for dealing with data structures, pointers, and callbacks one needs to pass to the native library. Finally, I will show some examples of projects where I've applied these concepts.
+This material is about creating Node.js interfaces for native libraries written in C. It is not so much about the mechanics of writing the code, or about the structure of a npm package containing a native addon, but about the various situations you are likely to face when writing addons. It starts with the assumption that it is best to create an addon that provides as little abstraction as possible so as to allow you to provide a Javascript API to the consumers of your project that is itself written in Javascript. The portion of the Node.js documentation that describes native addons, the V8 reference, and the reference provided by the Native Abstractions for Node ([NAN][]) project give you an ample toolset for creating native addons. Once you've managed to create your first native addon, and are ready to bring a complete native library into the Node.js world, you will be faced with having to translate the artifacts of the C language into Javascript concepts.  At that point, it pays to be systematic. It is beneficial to break the library's API into constants, enums, structures, and functions, and bind each onto the Node.js module you are creating in as automated a fashion as possible. In this material, I will describe some patterns for dealing with data structures, pointers, and callbacks one needs to pass to the native library.
 
 # Assumption
 
 It is best to write as little logic as possible into the bindings themselves. Ideally the addon is a one-to-one mapping of the underlying native API itself. Convenient abstractions can then be implemented in Javascript.
 
-Of course the underlying language has artifacts that need not be mapped.
+Nevertheless, the underlying language has artifacts that need not be mapped.
 
   0. For example, C has ```void *user_data``` with its function pointers, but that's only to provide room for context. Javascript is the king of context, so you don't need to map this mechanism into Javascript. OTOH, you need this mechanism for the <a href="#callbacks">internals of the bindings</a>.
   0. Another example is pointers that are filled out by the native side. In that case you can have the binding accept an empty object the properties of which it fills out (a receptacle) or you can return a new object you create inside the binding. But what if the native function additionally returns a result code (like ```errno``` for example)? Do you retain one-to-one-ness and use a receptacle object or do you break one-to-one-ness and return an object upon success and an error code otherwise? Do you throw the error code as an exception (again, breaking one-to-one-ness)? Your call.
@@ -17,7 +17,9 @@ Of course the underlying language has artifacts that need not be mapped.
   0. Avoid argument juggling. IOW, enforce that there be a certain number of arguments and that each argument have a certain type. At most, allow an argument to optionally be ```null``` (especially for strings).
   0. Make the portion of the stack that starts with the binding mimic the JS behaviour of throwing an exception when needed and tearing down afterwards. This means that the binding only sets the return value if no exceptions were thrown, otherwise it returns early. This in turn means that functions called by the binding (except for the underlying native API, the signature of which we cannot influence) have to return a boolean indicating whether the binding is to immediately return. Internally, these helper functions perform the setup required for later calling the native API and, if validation or other errors occur in the process, they throw an exception and ```return false;```. The fact that the binding checks the return value only for the purposes of deciding whether to return immediately rather than using the return value to decide whether to throw an exception and then return is a design choice. The idea is to be similar to JS in that we throw the exception nearest to the point of failure, rather than returning ```false``` and expecting the caller to throw the exception.
     ```C++
-    // Add examples for each case, highlighting the tradeoff between error message specificity (what failed) and error location specificity (what were you trying to do when it failed)
+    // Add examples for each case, highlighting the tradeoff between error
+	// message specificity (what failed) and error location specificity
+	// (what were you trying to do when it failed)
     ```
 
 # Situations
@@ -56,9 +58,10 @@ The structure of type ```coordinates``` can be converted to/from Javascript with
 
 In the case of the second API, the binding accepts a Javascript object which has properties named after the members of the ```cordinates``` structure. We declare a local C structure, retrieve each property of the object passed in, assert that it is of the correct type, throwing an exception and returning immediately if it isn't, and casting the value as a double, while assigning it to the corresponding C structure member.
 
-In general, it's a good idea to create a pair of helper functions that will convert the C structure to a JS structure and back. In [NAN](https://github.com/nodejs/nan/) parlance, this is what that looks like:
+In general, it's a good idea to create a pair of helper functions that will convert the C structure to a JS structure and back. In [NAN][] parlance, this is what that looks like:
 ```C++
-bool c_coordinates(v8::Local<v8::Object> jsCoordinates, struct coordinates *location) {
+bool c_coordinates(v8::Local<v8::Object> jsCoordinates,
+		struct coordinates *location) {
 
   // Define a local structure
   struct coordinates localLocation = { 0.0, 0.0, 0.0 };
@@ -105,7 +108,7 @@ You can maximize code reuse and increase the readability of the ```c_<structuren
 
 ### The complex case - handles
 
-In this case the underlying API gives you a "magic" pointer that identifies a resource the API maintains internally. The actual structure may or may not be opaque, but the value of the pointer is important. Note that by its very nature, such an API has to provide at least two functions: one for obtaining the "magic" pointer, and one for informing the API that it is no longer needed and may be disposed of. Here's an example API:
+In this case the underlying API gives you a "magic" pointer that identifies a resource the API maintains internally. The actual structure associated with the pointer type may or may not be opaque, but the value of the pointer is important. Note that by its very nature, such an API has to provide at least two functions: one for obtaining the "magic" pointer, and one for informing the API that it is no longer needed and may be disposed of. Here's an example API:
 
 ```C
 typedef void *RemoteResourceHandle;
@@ -146,13 +149,13 @@ Before diving into the process of passing a handle into Javascript we should con
   var x = setTimeout( function() {}, 1000 );
   x = null;
   ```
-  If we overwrite all references to the "magic" value, we have no way of removing the timeout. This is not a big poblem in the case of a timeout, because it will simply run once and then never again. However, in the case of ```setInterval()```, overwriting the return value of the function means that the interval has now leaked, and its callback will be called repeatedly "forever". Javascript follows this important heuristic and so, although V8 allows us to intercept a Javascript value as it is garbage-collected via weak references, our code that deals with handles can also be made easier: *If the handle goes out of scope, the resource to which it refers is leaked.*
+  If we overwrite all references to the "magic" value, we have no way of removing the timeout. In terms of memory management this is not a big poblem in the case of a timeout, because its semantics are such that it will simply run once and then be removed implicitly. However, in the case of ```setInterval()```, overwriting the return value of the function means that the interval has now leaked, and its callback will be called repeatedly "forever", keeping the memory allocated for it in place. Javascript follows this important heuristic and so, although V8 allows us to intercept a Javascript value as it is garbage-collected via weak references, our code that deals with handles can also be made easier: *If the handle goes out of scope before it is released, the resource to which it refers is leaked.*
 
 Armed with these heuristics, let's create our own handles with the help of NAN:
 ```C++
 template <class T> class JSHandle {
 
-    // This is the template from which all our instances will be created
+    // This is the V8 template from which all our instances will be created
     static Nan::Persistent<v8::FunctionTemplate> &theTemplate()
     {
         static Nan::Persistent<v8::FunctionTemplate> returnValue;
@@ -177,6 +180,7 @@ template <class T> class JSHandle {
             Nan::Set(Nan::GetFunction(theTemplate).ToLocalChecked(),
                 Nan::New("displayName").ToLocalChecked(),
                 Nan::New(T::jsClassName()).ToLocalChecked());
+
             returnValue.Reset(theTemplate);
         }
         return returnValue;
@@ -199,7 +203,8 @@ public:
     // If the object is not of the expected type, or if the pointer inside the
     // object has already been removed, then we must throw an error. Note that
 	// we assume that a Javascript handle containing a null pointer is not a
-	// valid Javascript handle at all.
+	// valid Javascript handle at all, so this setup is not adequate for
+	// wrapping NULL handles.
     static void *Resolve(v8::Local<v8::Object> jsObject)
     {
         void *returnValue = 0;
@@ -218,7 +223,7 @@ public:
 
 With this class template in a header file we can now create any number of Javascript classes that can be used to pass handles into Javascript land. For our example, we can declare the class
 ```C++
-class JSRemoteResourceHandle : public JSHandle<RemoteResourceHandle> {
+class JSRemoteResourceHandle : public JSHandle<JSRemoteResourceHandle> {
 public:
 	static const char *jsClassName() { return "RemoteResourceHandle"; }
 };
@@ -226,6 +231,7 @@ public:
 and then we can use it to pass handles into Javascript:
 ```C++
 RemoteResourceHandle *c_handle = remote_resource_retrieve(host, port);
+...
 Local<Object> jsRemoteResourceHandle = JSRemoteResourceHandle::New(c_handle);
 ```
 We can now set ```jsRemoteResourceHandle``` as the return value for our binding. In Javascript, the handle will show up as an empty Javascript object. Of course we can, at our option, decorate the handle with properties as we would any Javascript object, but the important thing is that ```c_handle``` is now stored inside this Javascript object instance without it being accessible from Javascript.
@@ -277,18 +283,19 @@ Local<Value> arguments[2] = {
 };
 jsCallback->Call(arguments, 2);
 ```
-This is bad. We have just created a second Javascript handle containing the same "magic" pointer as the one we passed into Javascript land during our binding of ```remote_resource_retrieve()```. The way around this is to create a persistent reference to the Javascript handle in our binding for ```remote_resource_set_int_async()``` and pass it, along with the ```Nan::Callback```, which is a persistent reference to the Javascript function that we must call (```jsCallback``` in the example above), as the ```void *data``` parameter of the native callback. Read more about this in the <a href="#callbacks">callbacks</a> section.
+The first argument to the Javascript callback is a handle we have created for this one function call. However, conceptually, the c_handle is the same as the one for which we have previously created a Javascript wrapper. This is bad. We have just created a second Javascript handle containing the same "magic" pointer as the one we passed into Javascript land during our binding of ```remote_resource_retrieve()```. The reason this is bad is that when the Javascript code invalidates one of the handles, the underlying C API in turn invalidates its own handle. However, we still have a copy of the now stale handle in a second Javascript handle which remains perfectly valid. This introduces a discrepancy between the state of the bindings and the state of the C library.
+
+The way around this is to create a persistent reference to the Javascript handle in our binding for ```remote_resource_set_int_async()``` and pass it, along with the ```Nan::Callback```, which is a persistent reference to the Javascript function that we must call (```jsCallback``` in the example above), as the ```void *data``` parameter of the native callback. Read more about this in the <a href="#callbacks">callbacks</a> section.
 
 ## Callbacks
-**TODO: Write about re-entrancy**
 Any non-trivial C API will offer functions which accept function pointers. The binding for such an API obviously accepts a Javascript function as one of its parameters. There is, at this point, a very important thing you have to keep in mind: C functions are "physical". That is, they are pieces of code which take up room on disk and in memory, and are stored in specially marked segments, marked as executable and protected from modification in all kinds of highly platform-dependent ways. In contrast, Javascript functions are merely pieces of data stored on the heap. Thus, Javascript functions can be created, copied, and destroyed at runtime whereas C functions can only be created at compile time. Thus, we cannot simply create a new C function at runtime to correspond to the Javascript function passed into our binding, to pass to the native API as a callback. Neither can we assume that exactly the same Javascript function will be passed to our binding every time it is called. We have no choice but to rely on a C programming artifact called a context or user data. In the above function ```remote_resource_set_int_async()``` it's the ```void *``` pointer which we pass to the API, and which we receive back from the API in the callback.
 
-Most C APIs worth their salt will provide such a parameter. However, if you ever run into one that doesn't, all is not lost, although it will have become far more complicated, going well beyond the scope of this reading. Suffice it to say that you can use [ffi][] or, more specifically, the C library it bundles under deps/libffi. Using this library, you can essentially create C functions at runtime such that a function you create
+Most C APIs worth their salt will provide such a parameter. However, if you ever run into one that doesn't, all is not lost, although it will have become far more complicated, going well beyond the scope of this reading. Suffice it to say that you can use [ffi][] or, more specifically, the C library it bundles under ```deps/libffi```. Using this library, you can essentially create C functions at runtime such that a function you create
   0. has the signature required by the native API you are trying to bind,
   0. stores the context you need in an internal variable, and
   0. calls a function of your choosing with all the variables it receives from the native callback plus the context.
 
-Another choice is to use trampoline from the GNU [libffcall][] library. Although trampoline looks much more elegant, it is not provided as an npm package, and its GPL v3 license may be difficult to reconcile with the more permissible licenses generally used with npm packages. The bottom line, however, is that if the native API does not provide room for a context, the only solutions left are fairly invasive and highly platfom-specific. Thus, in the remainder of this material we will only deal with examples of native APIs that provide room for a context parameter.
+Another choice is to use trampoline from the GNU [libffcall][] library. Although trampoline looks much more elegant, it is not provided as an npm package, and its GPL v3 license may be difficult to reconcile with the more permissive licenses generally used with npm packages. The bottom line, however, is that if the native API does not provide room for a context, the only solutions left are fairly invasive and highly platfom-specific. Thus, in the remainder of this material we will only deal with examples of native APIs that provide room for a context parameter.
 
 Whenever a native API accepts a callback function pointer, it usually uses it in one of two ways:
   0. The callback has a finite use and is removed implicitly as part of the last one of its executions.
@@ -614,3 +621,4 @@ The above code will throw an exception if the Javascript code attempts to doubly
 
 [ffi]: https://github.com/node-ffi/node-ffi
 [libffcall]: https://www.gnu.org/software/libffcall/trampoline.html
+[NAN]: https://github.com/nodejs/nan/
