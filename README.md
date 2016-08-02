@@ -81,7 +81,8 @@ bool c_coordinates(v8::Local<v8::Object> jsCoordinates, struct coordinates *loca
   return true;
 };
 
-Local<Object> js_coordinates(const struct coordinates *location, Local<Object> destination = Nan::New<Object>()) {
+Local<Object> js_coordinates(const struct coordinates *location,
+		Local<Object> destination = Nan::New<Object>()) {
   destination->Set(Nan::New("latitude").ToLocalChecked(),
     Nan::New(location->latitude));
   destination->Set(Nan::New("longitude").ToLocalChecked(),
