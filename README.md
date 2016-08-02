@@ -91,7 +91,7 @@ Local<Object> js_coordinates(const struct coordinates *location, Local<Object> d
   return destination;
 }
 ```
-The function that converts to Javascript works with an existing object if the second parameter is specified, but will create a new object if it is not. This comes in handy when you later use this function with <a href="#callbacks>callbacks</a>.
+The function that converts to Javascript works with an existing object if the second parameter is specified, but will create a new object if it is not. This comes in handy when you later use this function with <a href="#callbacks">callbacks</a>.
 
 You can maximize code reuse and increase the readability of the ```c_<structurename>()``` function if you create a macro for performing the validation. For example,
 ```C++
