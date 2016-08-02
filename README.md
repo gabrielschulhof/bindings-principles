@@ -1,10 +1,10 @@
 # Writing node.js Bindings - General Principles
 
-This material is about creating node.js interfaces for native libraries written in C. It is not so much about the mechanics of writing the code, or about the structure of a npm package containing a native addon, but about the various situations you are likely to face when writing addons. It starts with the assumption that it is best to create an addon that provides as little abstraction as possible so as to allow you to provide a Javascript API to the consumers of your project that is itself written in Javascript. The portion of the node.js documentation that describes native addons, the V8 reference, and the reference provided by the Native Abstractions for Node project give you an ample toolset for creating native addons. Once you've managed to create your first native addon, and are ready to bring a complete native library into the node.js world, you will be faced with having to translate the artifacts of the C language into Javascript concepts.  At that point, it pays to be systematic. It is beneficial to break the library's API into constants, enums, structures, and functions, and bind each onto the node.js module you are creating in as automated a fashion as possible. In my presentation, I will describe some patterns for dealing with data structures, pointers, and callbacks one needs to pass to the native library. Finally, I will show some examples of projects where I've applied these concepts.
+This material is about creating node.js interfaces for native libraries written in C. It is not so much about the mechanics of writing the code, or about the structure of a npm package containing a native addon, but about the various situations you are likely to face when writing addons. It starts with the assumption that it is best to create an addon that provides as little abstraction as possible so as to allow you to provide a Javascript API to the consumers of your project that is itself written in Javascript. The portion of the node.js documentation that describes native addons, the V8 reference, and the reference provided by the Native Abstractions for Node project give you an ample toolset for creating native addons. Once you've managed to create your first native addon, and are ready to bring a complete native library into the node.js world, you will be faced with having to translate the artifacts of the C language into Javascript concepts.  At that point, it pays to be systematic. It is beneficial to break the library's API into constants, enums, structures, and functions, and bind each onto the node.js module you are creating in as automated a fashion as possible. In this material, I will describe some patterns for dealing with data structures, pointers, and callbacks one needs to pass to the native library. Finally, I will show some examples of projects where I've applied these concepts.
 
 # Assumption
 
-It is best to write as little logic as possible into the bindings itself. Ideally the addon is a one-to-one mapping of the underlying native API itself. Convenient abstractions can then be implemented in Javascript.
+It is best to write as little logic as possible into the bindings themselves. Ideally the addon is a one-to-one mapping of the underlying native API itself. Convenient abstractions can then be implemented in Javascript.
 
 Of course the underlying language has artifacts that need not be mapped.
 
@@ -32,12 +32,14 @@ In this case the binding is easy. It accepts a list of arguments such that:
   0. The list is two arguments long
   0. The type of each argument is a JS number that can be cast as a double.
  
-Exceptions are only thrown if it turns out that the arguments do not contain values that can be cast as doubles. The return value is constructed from the return value of the native API.
+Exceptions are only thrown if it turns out that the length of the argument list is not equal to two, or if the arguments do not contain values that can be cast as doubles. The return value is constructed from the return value of the native API.
 
 ## Data
-This is any kind of data that does not fit into a primitive value that the language can handle directly. The distinction from primitive types is that now we're dealing with pointers. There are many ways in which data can be dealt with, so let's break up the use cases and look at each in turn. There are two orthogonal ways in which we can break down how we deal with data: On the one hand there's the case of the pointer the native API eventually expects back via a later call vs. the pointer it gives us for our information. On the other hand there's the pointer to a structure we can copy entirely vs. the "magic" pointer to a structure that is potentially even opaque to us - a handle.
+This is any kind of data that does not fit into a primitive value that the language can handle directly. The distinction from primitive types is that now we're dealing with pointers. There are many ways in which data can be dealt with, so let's break up the use cases and look at each in turn.
+  0. The structure. This is a pointer to a well-known structure into which the bindings can decend and from which they can construct a Javascript object. The structure is either passed to the native library or the native library may return it.
+  0. The handle. This is a "magic" pointer that is usually bookended by two API calls - one to create it, and one to destroy it.
 
-### The simple case - "here's the data you wanted"
+### The simple case - a transparent structure
 This is an API of the form:
 ```C
 struct coordinates {
@@ -45,11 +47,12 @@ struct coordinates {
   double longitude;
   double altitude;
 };
-/* Both APIs return non-NULL on success */
-const struct coordinates *find_restaurant_by_name(const char *name);
-const char *find_restaurant_at_coordinates(const struct coordinates *location);
+/* Both APIs return true on success */
+bool find_restaurant_by_name(const char *name, struct coordinates *location);
+bool restaurant_at_coordinates(const struct coordinates *location);
 ```
-The structure of type ```coordinates``` can be converted to/from Javascript without allocating any memory and worrying about who owns the pointers. In the binding for ```find_restaurant_by_name()``` we construct a JS object from the pointer returned by the API and set it as the return value or, if the API returns ```NULL```, we set the return value to a JS ```null```.
+
+The structure of type ```coordinates``` can be converted to/from Javascript without allocating any memory and worrying about who owns the pointers. In the binding for ```find_restaurant_by_name()``` we accept an empty JS object and fill it in from the pointer returned by the API if the API returns ```true```. In either case we forward the return value we receive from the API.
 
 In the case of the second API, the binding accepts a Javascript object which has properties named after the members of the ```cordinates``` structure. We declare a local C structure, retrieve each property of the object passed in, assert that it is of the correct type, throwing an exception and returning immediately if it isn't, and casting the value as a double, while assigning it to the corresponding C structure member.
 
@@ -78,19 +81,18 @@ bool c_coordinates(v8::Local<v8::Object> jsCoordinates, struct coordinates *loca
   return true;
 };
 
-Local<Object> js_coordinates(const struct coordinates *location) {
-  Local<Object> returnValue = Nan::New<Object>();
-  
-  returnValue->Set(Nan::New("latitude").ToLocalChecked(),
+Local<Object> js_coordinates(const struct coordinates *location, Local<Object> destination = Nan::New<Object>()) {
+  destination->Set(Nan::New("latitude").ToLocalChecked(),
     Nan::New(location->latitude));
-  returnValue->Set(Nan::New("longitude").ToLocalChecked(),
+  destination->Set(Nan::New("longitude").ToLocalChecked(),
     Nan::New(location->longitude));
-  returnValue->Set(Nan::New("altitude").ToLocalChecked(),
+  destination->Set(Nan::New("altitude").ToLocalChecked(),
     Nan::New(location->altitude));
-
-  return returnValue;
+  return destination;
 }
 ```
+The function that converts to Javascript works with an existing object if the second parameter is specified, but will create a new object if it is not. This comes in handy when you later use this function with <a href="#callbacks>callbacks</a>.
+
 You can maximize code reuse and increase the readability of the ```c_<structurename>()``` function if you create a macro for performing the validation. For example,
 ```C++
 #define VALIDATE_VALUE_TYPE(value, typecheck, message, failReturn) \
@@ -115,7 +117,7 @@ bool remote_resource_release(RemoteResourceHandle c_handle);
 How do we bind this API? We could do something simple and treat the handle as an array of bytes. We don't even need to know whether pointers are 32 bit values or 64 bit values. We simply create an array of length ```sizeof(RemoteResourceHandle)``` and store the pointer as an array of bytes. We can even create functions
 
 ```C++
-Local<Array> js_RemoteResourceHandle(RemoteResourceHandle handle);
+Local<Array> js_RemoteResourceHandle(RemoteResourceHandle handle, Local<Array> destination = Nan::New<Array>(sizeof(RemoteResourceHandle)));
 bool c_RemoteResourceHandle(Local<Array> jsHandle, RemoteResourceHandle *c_handle);
 ```
 
@@ -130,7 +132,7 @@ Before diving into the process of passing a handle into Javascript we should con
   
   // What exactly does x now hold?
   ```
-  The function returns a "magic" value, which is completely useless for anything other than passing it to ```clearTimeout()```. Not even the type of the value is certain. In browsers, it's usually an integer, however, in node.js it's an object. All we know is that it can be stored in a variable, and can be copied from variable to variable.
+  The function returns a "magic" value, which is completely useless for anything other than passing it to ```clearTimeout()```. Not even the type of the value is certain. In browsers, it's usually an integer, however, in Node.js it's an object. All we know is that it can be stored in a variable, and can be copied from variable to variable.
   0. 
   
   ```JS
@@ -194,7 +196,9 @@ public:
 
     // This is how we retrieve the pointer we've stored during instantiation.
     // If the object is not of the expected type, or if the pointer inside the
-    // object has already been removed, then we must throw an error.
+    // object has already been removed, then we must throw an error. Note that
+	// we assume that a Javascript handle containing a null pointer is not a
+	// valid Javascript handle at all.
     static void *Resolve(v8::Local<v8::Object> jsObject)
     {
         void *returnValue = 0;
@@ -240,16 +244,22 @@ if (!c_handle) {
 	return;
 }
 
-remote_resource_release(c_handle);
+bool returnValue = remote_resource_release(c_handle);
 
-// Render the special object inert. We set the internal pointer to NULL, thus
-// causing any future calls to ::Resolve() to throw an exception. This is more
-// aggressive than the way clearTimeout()/clearInterval() behave. Thus, you may
-// wish to implement ::Resolve() such that it won't treat NULL as a cause for
-// throwing an exception. Nevertheless, throwing an exception is not a bad way
-// of handling the case of multiply releasing the same resource, because it
-// informs developers of potential race conditions. Your call.
-Nan::SetInternalFieldPointer(jsHandle, 0, 0);
+if (returnValue) {
+
+	// Render the special object inert. We set the internal pointer to NULL,
+	// thus causing any future calls to ::Resolve() to throw an exception. This
+	// is more aggressive than the way clearTimeout()/clearInterval() behave.
+	// Thus, you may wish to implement ::Resolve() such that it won't treat
+	// NULL as a cause for throwing an exception. Nevertheless, throwing an
+	// exception is not a bad way of handling the case of multiply releasing
+	// the same resource, because it informs developers of potential race
+	// conditions. Your call.
+	Nan::SetInternalFieldPointer(jsHandle, 0, 0);
+}
+
+info.GetReturnValue().Set(Nan::New(returnValue));
 ...
 ```
 Since these special objects can only be created using our bindings, we should avoid creating more than one Javascript object for a given native handle so as to avoid the case of stale pointers. The simple remote resource API shown above does not really give us the opportunity to make such a mistake. Let's consider the case where we have the opportunity to create multiple Javascript objects for the same handle, but where we must avoid doing so. Suppose we have an additional C API that has asynchronous completion:
@@ -272,14 +282,14 @@ This is bad. We have just created a second Javascript handle containing the same
 **TODO: Write about re-entrancy**
 Any non-trivial C API will offer functions which accept function pointers. The binding for such an API obviously accepts a Javascript function as one of its parameters. There is, at this point, a very important thing you have to keep in mind: C functions are "physical". That is, they are pieces of code which take up room on disk and in memory, and are stored in specially marked segments, marked as executable and protected from modification in all kinds of highly platform-dependent ways. In contrast, Javascript functions are merely pieces of data stored on the heap. Thus, Javascript functions can be created, copied, and destroyed at runtime whereas C functions can only be created at compile time. Thus, we cannot simply create a new C function at runtime to correspond to the Javascript function passed into our binding, to pass to the native API as a callback. Neither can we assume that exactly the same Javascript function will be passed to our binding every time it is called. We have no choice but to rely on a C programming artifact called a context or user data. In the above function ```remote_resource_set_int_async()``` it's the ```void *``` pointer which we pass to the API, and which we receive back from the API in the callback.
 
-Most C APIs worth their salt will provide such a parameter. However, if you ever run into one that doesn't, all is not lost, although it has become far more complicated, going well beyond the scope of this reading. Suffice it to say that you can use [ffi][] or, more specifically, the C library it bundles under deps/libffi. Using this library, you can essentially create C functions at runtime such that a function you create
+Most C APIs worth their salt will provide such a parameter. However, if you ever run into one that doesn't, all is not lost, although it will have become far more complicated, going well beyond the scope of this reading. Suffice it to say that you can use [ffi][] or, more specifically, the C library it bundles under deps/libffi. Using this library, you can essentially create C functions at runtime such that a function you create
   0. has the signature required by the native API you are trying to bind,
   0. stores the context you need in an internal variable, and
   0. calls a function of your choosing with all the variables it receives from the native callback plus the context.
 
 Another choice is to use trampoline from the GNU [libffcall][] library. Although trampoline looks much more elegant, it is not provided as an npm package, and its GPL v3 license may be difficult to reconcile with the more permissible licenses generally used with npm packages. The bottom line, however, is that if the native API does not provide room for a context, the only solutions left are fairly invasive and highly platfom-specific. Thus, in the remainder of this material we will only deal with examples of native APIs that provide room for a context parameter.
 
-Whenever a native API accepts a callback function pointer, it usually does so for one of two reasons:
+Whenever a native API accepts a callback function pointer, it usually uses it in one of two ways:
   0. The callback has a finite use and is removed implicitly as part of the last one of its executions.
   0. The callback is finite but open-ended - that is, it remains in place until it is removed by a call to another API or by a second call to the same API.
 
@@ -307,8 +317,15 @@ void setIntCallback(void *data, RemoteResourceHandle c_handle, bool wasSuccessfu
 		// want to avoid creating two different JS objects referring to the
 		// same native handle - see the section on handles.
 		Nan::New<Object>(*(params->jsHandle)),
-		
+		Nan::New(wasSuccessful)
 	};
+
+	// Call the callback
+	params->jsCallback->Call(arguments, 2);
+
+	// Since we know that this callback will never be called again, we free its
+	// context
+	delete params;
 }
 ...
 // In the binding we retrieve the native handle from the JS handle - as
@@ -345,6 +362,254 @@ remote_resource_set_int_async(c_handle, key, value, setIntCallback, params);
 ...
 ```
 
+### The explicitly removed callback
+This setup most resembles Javascript's own ```setInterval()```/```clearInterval()``` pair. The semantics are that the first API receives a function that will be called periodically whenever a relevant event occurs, and returns a handle that can be passed to a second API which will cause the library to release the resources associated with periodically calling the function.
+
+Below is an example of such an API pair.
+
+```C
+FileSystemWatch watch_file_name(const char *file_name,
+	void (*file_changed)(void *context, const char *file_name, const enum
+		FileEvent event),
+	void *context);
+
+bool unwatch_file_name(FileSystemWatch watch);
+```
+
+A variation of this API is one where the callback returns a boolean value to indicate to the native library whether it should keep calling it or whether it should release the resources associated with calling it.
+
+```C
+FileSystemWatch watch_file_name(const char *file_name,
+	bool (*file_changed)(void *context, const char *file_name,
+		const enum FileEvent event),
+	void *context);
+
+bool unwatch_file_name(FileSystemWatch watch);
+```
+
+In both cases we must construct the Javascript handle in such a way that it contains all the information necessary for later removing it. To implement our binding, we must first create a structure for the context and a C function we will use as the callback we pass to the C API.
+
+```C++
+struct FileSystemWatchCallbackData {
+
+	// The native handle
+	FileSystemWatch watch;
+
+	// A persistent reference to the Javascript callback associated with the
+	// native handle
+	Nan::Callback *callback;
+};
+
+void file_changed_callback(void *context, const char *file_name,
+		const enum FileEvent event) {
+
+	// Since the stack containing this function call starts with the native
+	// library we must make sure that we have a V8 scope in which to create new
+	// Javascript variables
+	Nan::HandleScope scope;
+
+	// Cast the context back to a structure pointer
+	FileSystemWatchCallbackData *data =
+		(FileSystemWatchCallbackData *)context;
+
+	// Construct the arguments for the call to Javascript
+	Local<Value> arguments[2] = {
+		Nan::New(file_name).ToLocalChecked(),
+		Nan::New((int)event);
+	};
+
+	// Call the Javascript callback
+	data->callback->Call(2, arguments);
+}
+```
+We then define a type of handle which will correspond to the native FileSystemWatch and which will bear its name in Javascript. Our handle will store a pointer to a ```FileSystemWatchCallbackData``` structure. We will use the handle definition from <a href="#handles">handles</a>.
+```C++
+class JSFileSystemWatch: public JSHandle<JSFileSystemWatch> {
+public:
+	const char *JSClassName() { return "FileSystemWatch"; }
+};
+```
+The binding for our native API, including the validation, then looks like this:
+```C++
+NAN_METHOD(bind_watch_file_name) {
+
+	// Make sure the arguments we receive are as expected
+	VALIDATE_ARGUMENT_COUNT(info, 2);
+	VALIDATE_ARGUMENT_TYPE(info, 0, IsString);
+	VALIDATE_ARGUMENT_TYPE(info, 1, IsFunction);
+
+	// Allocate the structure which will hold everything we need
+	FileSystemWatchCallbackData *callbackData =
+		new FileSystemWatchCallbackData;
+
+	// Create a persistent reference to the Javascript function object using
+	// NAN's handy Nan::Callback API
+	callbackData->callback = new Nan::Callback(Local<Function>::Cast(info[1]));
+
+	// Call the native API
+	callbackData->watch = watch_file_name(
+		(const char *)*String::Utf8Value(info[0]),
+		file_changed_callback,
+		callbackData);
+
+	// The native C API failed. Clean up and return.
+	if (!callbackData->watch) {
+		delete callbackData->callback;
+		delete callbackData;
+		info.GetReturnValue().Set(Nan::Null());
+		return;
+	}
+
+	// Wrap the structure in a handle and return the handle to Javascript
+	info.GetReturnValue().Set(JSFileSystemWatch::New(callbackData));
+}
+```
+The binding for the API to release the ```FileSystemWatch``` handle then looks like this:
+```C++
+NAN_METHOD(bind_unwatch_file_name) {
+
+	// Make sure the arguments we receive are as expected
+	VALIDATE_ARGUMENT_COUNT(info, 1);
+	VALIDATE_ARGUMENT_TYPE(info, 0, IsObject);
+
+	// Cast the first argument as a Javascript object
+	Local<Object> jsWatch = Nan::To<Object>(info[0]).ToLocalChecked();
+
+	// Retrieve the native structure we created in the other binding
+	FileSystemWatchCallbackData *callbackData =
+		(FileSystemWatchCallbackData *)JSFileSystemWatch::Resolve(jsWatch);
+
+	// JSFileSystemWatch::Resolve() has failed and it has thrown an appropriate
+	// exception. Thus, we can return immediately.
+	if (!callbackData) {
+		return;
+	}
+
+	// Call the native API and store the return value
+	bool returnValue = unwatch_file_name(callbackData->watch);
+
+	// Removing the native FileSystemWatch has failed, so we reflect that in
+	// our return value, and we return without freeing our structure or the
+	// Javascript handle.
+	if (!returnValue) {
+		info.GetReturnValue().Set(Nan::New(returnValue));
+		return;
+	}
+
+	// Free the reference to the Javascript function object because it will not
+	// be called anymore
+	delete callbackData->callback;
+
+	// Delete the structure itself
+	delete callbackData;
+
+	// Invalidate the Javascript handle
+	Nan::SetInternalFieldPointer(jsWatch, 0, 0);
+}
+```
+### Reentrancy problems
+In the case of a hybrid API, where the callback can be removed both implicitly by returning ```false``` from it, and explicitly, by calling the API to remove it (```unwatch_file_name()``` in the above example), we run into a complication where the Javascript implementation of the callback can call the binding for ```unwatch_file_name()```, but we must also free the same handle and structure from the native callback in case the Javascript callback returns indicating that it is to be implicitly removed. This raises the problem that we may accidentally end up freeing the same structure twice. To illustrate, consider the hybrid version of the above API:
+
+```C
+FileSystemWatch watch_file_name(const char *file_name,
+	bool (*file_changed)(void *context, const char *file_name, const enum
+		FileEvent event),
+	void *context);
+
+bool unwatch_file_name(FileSystemWatch watch);
+```
+The only difference is that the return value of the callback is boolean rather than void. The semantics are that, if the callback returns ```false```, the callback is implicitly removed and the structure and the handle are to be freed. However, we must keep in mind that, as we call the Javascript callback from the native callback, the body of the Javascript callback might include a call to the API to explicitly release the file system watch. For example, we might have
+```JS
+var watchResolvConf = myLibrary.watch_file_name("/etc/resolv.conf", function( fileName, fileSystemEvent ) {
+
+	// Do something ...
+
+	// Explicitly free the handle
+	myLibrary.unwatch_file_name( watchResolvConf );
+
+	// Do some more stuff ...
+
+	// Implicitly free the handle
+	return false;
+} );
+```
+This is a contrived example, however, as the Javascript code becomes more complex, it is possible that it accidentally attempts to free the handle twice - once via the explicit API call made from within the callback, and once implicitly via the ```false``` return value. This is a mistake, of course, but we must handle it to the extent that we should avoid a double free and a resulting segmentation fault. To do so, we must modify the structure ```FileSystemWatchCallbackData``` to also contain a persistent reference to the Javascript handle. This results in a somewhat self-referential structure, in that the structure contains a persistent reference to the Javascript handle which, in turn, contains a pointer to the structure. The structure and the callback will then have the following code:
+```C++
+struct FileSystemWatchCallbackData {
+
+	// The native handle
+	FileSystemWatch watch;
+
+	// A persistent reference to the Javascript callback associated with the
+	// native handle
+	Nan::Callback *callback;
+
+	// A persistent reference to the Javascript handle
+	Nan::Persistent<Object> *jsHandle;
+};
+
+bool file_changed_callback(void *context, const char *file_name,
+		const enum FileEvent event) {
+
+	// Since the stack containing this function call starts with the native
+	// library we must make sure that we have a V8 scope in which to create new
+	// Javascript variables
+	Nan::HandleScope scope;
+
+	// Cast the context back to a structure pointer
+	FileSystemWatchCallbackData *data =
+		(FileSystemWatchCallbackData *)context;
+
+	// Construct the arguments for the call to Javascript
+	Local<Value> arguments[2] = {
+		Nan::New(file_name).ToLocalChecked(),
+		Nan::New((int)event);
+	};
+
+	// Before calling the Javascript callback, we retain a local reference to
+	// the Javascript handle, because the callback may contain code which
+	// invalidates the handle, and, if it returns false, we must also
+	// invalidate the handle, but only if it is still valid. Thus, we need to
+	// be able to check if the handle is still valid after the callback.
+	Local<Object> jsHandle = Nan::New(*(context->jsHandle));
+
+	// Call the Javascript callback
+	Local<Value> jsReturnValue = data->callback->Call(2, arguments);
+
+	// If the return value is not a boolean, throw an exception and retain
+	// this callback
+	VALIDATE_CALLBACK_RETURN_VALUE_TYPE(jsReturnValue, IsBoolean,
+		"file_changed_callback", true);
+
+	// The return value is a boolean. Now, let's convert it to a native bool.
+	bool returnValue = Nan::To<bool>(jsReturnValue).FromJust();
+
+	// A false return value indicates that this callback context is to be freed
+	// implicitly. However, it may have already been freed explicitly in the
+	// course of the above Javascript callback. So, if we are asked to free
+	// implicitly here, we must first ascertain that the context is still valid.
+	if (!returnValue) {
+
+		// Ascertain that the callback context remains valid. This will throw
+		// an exception if the handle has been invalidated as part of an
+		// explicit release via a call to the unwatch_file_name() binding.
+		data = (FileSystemWatchCallbackData *)
+			JSFileSystemWatch::Resolve(jsHandle);
+
+		// If the data is still around then we free it here, implicitly.
+		if (data) {
+			delete data->callback;
+			data->jsHandle->Reset();
+			delete data->jsHandle;
+			delete data;
+		}
+	}
+
+	return returnValue;
+}
+```
+
+The above code will throw an exception if the Javascript code attempts to doubly release the handle. If you want to be less drastic, and more like ```clearTimeout()```, you can add a method to ```JSHandle``` that will not throw an exception if the pointer stored within the Javascript object is ```NULL``` and then use that method instead of ```::Resolve()``` in the above code.
 
 [ffi]: https://github.com/node-ffi/node-ffi
 [libffcall]: https://www.gnu.org/software/libffcall/trampoline.html
