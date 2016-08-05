@@ -151,7 +151,7 @@ Before diving into the process of passing a handle into Javascript we should con
   ```
   If we overwrite all references to the "magic" value, we have no way of removing the timeout. In terms of memory management this is not a big poblem in the case of a timeout, because its semantics are such that it will simply run once and then be removed implicitly. However, in the case of ```setInterval()```, overwriting the return value of the function means that the interval has now leaked, and its callback will be called repeatedly "forever", keeping the memory allocated for it in place. Javascript follows this important heuristic and so, although V8 allows us to intercept a Javascript value as it is garbage-collected via weak references, our code that deals with handles can also be made easier: *If the handle goes out of scope before it is released, the resource to which it refers is leaked.*
 
-Armed with these heuristics, let's create our own handles with the help of NAN:
+Armed with these heuristics, let's create our own handles with the help of NAN:<a name="handle-class-template"></a>
 ```C++
 template <class T> class JSHandle {
 
@@ -318,6 +318,12 @@ struct CallbackParams {
 // context parameter identifies the JS callback we need to call, and we have
 // all the information we need for constructing the JS callback's arguments.
 void setIntCallback(void *data, RemoteResourceHandle c_handle, bool wasSuccessful) {
+
+	// Since the stack containing this function call starts with the native
+	// library we must make sure that we have a V8 scope in which to create new
+	// Javascript variables
+	Nan::HandleScope scope;
+
 	CallbackParams *params = (CallbackParams *)data;
 	Local<Value> arguments[2] = {
 
@@ -333,6 +339,9 @@ void setIntCallback(void *data, RemoteResourceHandle c_handle, bool wasSuccessfu
 
 	// Since we know that this callback will never be called again, we free its
 	// context
+	delete params->jsCallback;
+	params->jsHandle->Reset();
+	delete params->jsHandle;
 	delete params;
 }
 ...
@@ -579,7 +588,7 @@ bool file_changed_callback(void *context, const char *file_name,
 	// invalidates the handle, and, if it returns false, we must also
 	// invalidate the handle, but only if it is still valid. Thus, we need to
 	// be able to check if the handle is still valid after the callback.
-	Local<Object> jsHandle = Nan::New(*(context->jsHandle));
+	Local<Object> jsHandle = Nan::New<Object>(*(context->jsHandle));
 
 	// Call the Javascript callback
 	Local<Value> jsReturnValue = data->callback->Call(2, arguments);
