@@ -10,27 +10,35 @@ Nevertheless, the underlying language has artifacts that need not be mapped.
 
   0. For example, C has ```void *user_data``` with its function pointers, but that's only to provide room for context. Javascript is the king of context, so you don't need to map this mechanism into Javascript. OTOH, you need this mechanism for the <a href="#callbacks">internals of the bindings</a>.
   0. C also doesn't have a concept of variable-length arrays. Thus, many APIs that accept variable-length arrays do so by accepting two parameters: a pointer to the data, and an integer indicating how many items are stored at the pointer. For example:
+
     ```C
     void draw_multi_line(point *points, size_t point_count);
     ```
+
     or
+
     ```C
     struct point_array {
       point *points;
       size_t point_count;
     };
     ```
+
     Since Javascript has a native array type, it is unnecessary to write the bindings in such a way that you have to pass the lengths from Javascript to the binding, otherwise you invariably end up with
+
     ```JS
-    myAddon.draw_multi_line(points, points.length);
+    myAddon.draw_multi_line( points, points.length );
     ```
+
     or
+
     ```JS
     {
       points: points,
       point_count: points.length
     } 
     ```
+
     which is superfluous, since the array already conveys its length to the C++ bindings.
   0. You might also consider pointers that are filled out by the native side. In that case you can have the binding accept an empty object the properties of which it fills out (a receptacle) or you can return a new object you create inside the binding. But what if the native function additionally returns a result code (like ```errno``` for example)? Do you retain one-to-one-ness and use a receptacle object or do you break one-to-one-ness and return an object upon success and an error code otherwise? Do you throw the error code as an exception (again, breaking one-to-one-ness)? Your call.
 
@@ -39,9 +47,10 @@ Nevertheless, the underlying language has artifacts that need not be mapped.
   0. Trust data from the native side, but validate data from the JS side. Do not directly cast a JS value to the type needed by the native API. Instead check that it contains the type needed by the native API first. If it does, cast it and proceed. If it doesn't, throw a TypeError with text naming the parameter that failed validation and return immediately.
   0. Avoid argument juggling. IOW, enforce that there be a certain number of arguments and that each argument have a certain type. At most, allow an argument to optionally be ```null``` (especially for strings).
   0. Make the portion of the stack that starts with the binding mimic the JS behaviour of throwing an exception when needed and tearing down afterwards. This means that the binding only sets the return value if no exceptions were thrown, otherwise it returns early. This in turn means that functions called by the binding (except for the underlying native API, the signature of which we cannot influence) have to return a boolean indicating whether the binding is to immediately return. Internally, these helper functions perform the setup required for later calling the native API and, if validation or other errors occur in the process, they throw an exception and ```return false;```. The fact that the binding checks the return value only for the purposes of deciding whether to return immediately rather than using the return value to decide whether to throw an exception and then return is a design choice. The idea is to be similar to JS in that we throw the exception nearest to the point of failure, rather than returning ```false``` and expecting the caller to throw the exception.
+
     ```C++
-    // Add examples for each case, highlighting the tradeoff between error
-	// message specificity (what failed) and error location specificity
+    // TODO: Add examples for each case, highlighting the tradeoff between
+	// error message specificity (what failed) and error location specificity
 	// (what were you trying to do when it failed)
     ```
 
