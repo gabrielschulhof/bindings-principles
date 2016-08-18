@@ -68,6 +68,29 @@ In this case the binding is easy. It accepts a list of arguments such that:
  
 Exceptions are only thrown if it turns out that the length of the argument list is not equal to two, or if the arguments do not contain values that can be cast as doubles. The return value is constructed from the return value of the native API.
 
+```C++
+NAN_METHOD(bind_area_of_oval) {
+  VALIDATE_ARGUMENT_COUNT(info, 2);
+  VALIDATE_ARGUMENT_TYPE(info, 0, IsNumber);
+  VALIDATE_ARGUMENT_TYPE(info, 1, IsNumber);
+  info.GetReturnValue().Set(Nan::New(area_of_double(
+    Nan::To<double>(info[0]).FromJust(),
+	Nan::To<double>(info[1]).FromJust())));
+}
+```
+
+Note that the above code uncoditionally performs ```.FromJust()```. V8 provides an additional interceptible point of failure where we can check whether the conversion to a ```double``` has succeeded:
+```C++
+Nan::Maybe<double> maybeXRadius = Nan::To<double>(info[0]);
+if (maybeXRadius->IsEmpty()) {
+	Nan::ThrowError("Failed to convert x_radius to double");
+	return;
+}
+double x_radius = maybeXRadius.FromJust();
+```
+
+You can certainly incorporate this additional check in your bindings. I haven't done so yet ☺
+
 ## Data
 This is any kind of data that does not fit into a primitive value that the language can handle directly. The distinction from primitive types is that now we're dealing with pointers. There are many ways in which data can be dealt with, so let's break up the use cases and look at each in turn.
   0. The structure. This is a pointer to a well-known structure into which the bindings can decend and from which they can construct a Javascript object. The structure is either passed to the native library or the native library may return it.
