@@ -509,10 +509,19 @@ NAN_METHOD(bind_watch_file_name) {
 	// Allocate the structure which will hold everything we need
 	FileSystemWatchCallbackData *callbackData =
 		new FileSystemWatchCallbackData;
+	if (!callbackData) {
+		Nan::ThrowError("Failed to allocate callback data");
+		return;
+	}
 
 	// Create a persistent reference to the Javascript function object using
 	// NAN's handy Nan::Callback API
 	callbackData->callback = new Nan::Callback(Local<Function>::Cast(info[1]));
+	if (!callbackData->callback) {
+		Nan::ThrowError("Failed to allocate callback reference");
+		delete callbackData;
+		return;
+	}
 
 	// Call the native API
 	callbackData->watch = watch_file_name(
@@ -571,7 +580,8 @@ NAN_METHOD(bind_unwatch_file_name) {
 	// Delete the structure itself
 	delete callbackData;
 
-	// Invalidate the Javascript handle
+	// Invalidate the Javascript handle so subsequent attempts to release this
+	// handle will result in a Javascript exception being throwns
 	Nan::SetInternalFieldPointer(jsWatch, 0, 0);
 }
 ```
