@@ -184,27 +184,27 @@ and basically pass the pointer blindly into Javascript land. This is not a very 
 
 Before diving into the process of passing a handle into Javascript we should consider an important aspect of handles. Whenever we store the value of the handle, we risk creating a copy that will become stale. That is, for a given handle, we risk passing it to ```remote_resource_set_int()``` after having already called ```remote_resource_release()```. This is especially true in Javascript code, which can be highly asynchronous, in turn making the tracking of the sequence in which the above APIs get called a fairly difficult task. Fortunately, Javascript itself provides us with an excellent template for dealing with handles. Consider ```setTimeout()```:
 
-  0. 
+  0. It returns a "magic" value:
   
   ```JS
   var x = setTimeout( function() {}, 1000 );
   
   // What exactly does x now hold?
   ```
-  The function returns a "magic" value, which is completely useless for anything other than passing it to ```clearTimeout()```. Not even the type of the value is certain. In browsers, it's usually an integer, however, in Node.js it's an object. All we know is that it can be stored in a variable, and can be copied from variable to variable.
-  0. 
+  The value is completely useless for anything other than passing it to ```clearTimeout()```. Not even the type of the value is certain. In browsers, it's usually an integer, however, in Node.js it's an object. All we know is that it can be stored in a variable, and can be copied from variable to variable.
+  0. The value is only meaningful when passed to ```clearTimeout()```:
   
   ```JS
   clearTimeout( x );
   ```
-  When we pass this "magic" value to ```clearTimeout()``` the only circumstance under which anything happens is if the timeout is still active, in which case the effect of ```clearTimeout()``` will be that the callback it was meant to run in a delayed fashion will never be run. In all other circumstances, passing such a value to ```clearTimeout()``` will have no effect.
-  0. 
+  ```clearTimeout()``` behaves in such a way that the only circumstance under which anything happens is if the timeout is still active, in which case the effect of ```clearTimeout()``` will be that the callback it was meant to run in a delayed fashion will never be run. In all other circumstances, passing such a value to ```clearTimeout()``` will have no effect.
+  0. What happens if we lose all references to the "magic" value?
   
   ```JS
   var x = setTimeout( function() {}, 1000 );
   x = null;
   ```
-  If we overwrite all references to the "magic" value, we have no way of removing the timeout. In terms of memory management this is not a big poblem in the case of a timeout, because its semantics are such that it will simply run once and then be removed implicitly. However, in the case of ```setInterval()```, overwriting the return value of the function means that the interval has now leaked, and its callback will be called repeatedly "forever", keeping the memory allocated for it in place. Javascript follows this important heuristic and so, although V8 allows us to intercept a Javascript value as it is garbage-collected via weak references, our code that deals with handles can also be made 		easier: *If the handle goes out of scope before it is released, the resource to which it refers is leaked.*
+  If we overwrite all references to the "magic" value, we have no way of removing the timeout. In terms of memory management this is not a big poblem for the bindings because the semantics of ```setTimeout()``` are such that it will simply run once and then be removed implicitly. However, in the case of ```setInterval()```, overwriting the return value of the function means that the interval has now leaked, and its callback will be called repeatedly "forever", keeping the memory allocated for it in place. Javascript follows this important heuristic and so, although V8 allows us to intercept a Javascript value as it is garbage-collected via weak references, our code that deals with handles can also be made 		easier: *If the handle goes out of scope before it is released, the resource to which it refers is leaked.*
 
 Armed with these heuristics, let's create our own handles with the help of NAN:<a name="handle-class-template"></a>
 ```C++
