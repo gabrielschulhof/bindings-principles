@@ -345,7 +345,7 @@ The way around this is to create a persistent reference to the Javascript handle
 ## Callbacks
 Any non-trivial C API will offer functions which accept function pointers. The binding for such an API obviously accepts a Javascript function as one of its parameters. There is, at this point, a very important thing you have to keep in mind: C functions are "physical". That is, they are pieces of code which take up room on disk and in memory, and are stored in specially marked segments, marked as executable and protected from modification in all kinds of highly platform-dependent ways. In contrast, Javascript functions are merely pieces of data stored on the heap. Thus, Javascript functions can be created, copied, and destroyed at runtime whereas C functions can only be created at compile time. Thus, we cannot simply create a new C function at runtime to correspond to the Javascript function passed into our binding, to pass to the native API as a callback. Neither can we assume that exactly the same Javascript function will be passed to our binding every time it is called. We have no choice but to rely on a C programming artifact called a context or user data. In the above function ```remote_resource_set_int_async()``` it's the ```void *``` pointer which we pass to the API, and which we receive back from the API in the callback.
 
-Most C APIs worth their salt will provide such a parameter. However, if you ever run into one that doesn't, all is not lost, although it will have become far more complicated, going well beyond the scope of this reading. Suffice it to say that you can use [ffi][] or, more specifically, the C library it bundles under ```deps/libffi```. Using this library, you can essentially create C functions at runtime such that a function you create
+Most C APIs worth their salt will provide such a parameter. However, if you ever run into one that doesn't, all is not lost, although binding it will have become far more complicated, going well beyond the scope of this reading. Suffice it to say that you can use [ffi][] or, more specifically, the C library it bundles under ```deps/libffi```. Using this library, you can essentially create C functions at runtime such that a function you create
   0. has the signature required by the native API you are trying to bind,
   0. stores the context you need in an internal variable, and
   0. calls a function of your choosing with all the variables it receives from the native callback plus the context.
@@ -400,38 +400,34 @@ void setIntCallback(void *data, RemoteResourceHandle c_handle, bool wasSuccessfu
 	delete params;
 }
 ...
-// In the binding we retrieve the native handle from the JS handle - as
-// described in the section on handles
-RemoteResourceHandle c_handle = JSRemoteResourceHandle::Resolve(jsHandle);
-if (!c_handle) {
-	return;
-}
+NAN_METHOD(bind_remote_resource_set_int_async) {
 ...
-struct CallbackParams *params = new struct CallbackParams;
-if (!params) {
-	return;
-}
+	struct CallbackParams *params = new struct CallbackParams;
+	if (!params) {
+		return;
+	}
 ...
-// Create a pointer to a Nan::Callback - a persistent reference to the JS
-// function. This is a pointer we can pass to the native callback.
-params->jsCallback = new Nan::Callback(jsCallback);
-if (!params->jsCallback) {
-	delete params;
-	return;
-}
+	// Create a pointer to a Nan::Callback - a persistent reference to the JS
+	// function. This is a pointer we can pass to the native callback.
+	params->jsCallback = new Nan::Callback(jsCallback);
+	if (!params->jsCallback) {
+		delete params;
+		return;
+	}
 
-// Create a pointer to a persistent reference to the JS handle so we can pass
-// it back to JS from the callback
-params->jsHandle = new Nan::Persistent<Object>(jsHandle);
-if (!params->jsHandle) {
-	delete params->jsCallback;
-	delete params;
-	return;
-}
+	// Create a pointer to a persistent reference to the JS handle so we can pass
+	// it back to JS from the callback
+	params->jsHandle = new Nan::Persistent<Object>(jsHandle);
+	if (!params->jsHandle) {
+		delete params->jsCallback;
+		delete params;
+		return;
+	}
 
-// Now we have everything for the call to the native API
-remote_resource_set_int_async(c_handle, key, value, setIntCallback, params);
+	// Now we have everything for the call to the native API
+	remote_resource_set_int_async(c_handle, key, value, setIntCallback, params);
 ...
+}
 ```
 
 ### The explicitly removed callback
