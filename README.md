@@ -1,6 +1,6 @@
 # Writing Node.js Bindings - General Principles
 
-This material is about creating Node.js interfaces for native libraries written in C. It is not so much about the mechanics of writing the code, or about the structure of a npm package containing a native addon, but about the various situations you are likely to face when writing addons. It starts with the assumption that it is best to create an addon that provides as little abstraction as possible so as to allow you to provide a Javascript API to the consumers of your project that is itself written in Javascript. The portion of the Node.js documentation that describes native addons, the V8 reference, and the reference provided by the Native Abstractions for Node ([NAN][]) project give you an ample toolset for creating native addons. Once you've managed to create your first native addon, and are ready to bring a complete native library into the Node.js world, you will be faced with having to translate the artifacts of the C language into Javascript concepts.  At that point, it pays to be systematic. It is beneficial to break the library's API into constants, enums, structures, and functions, and bind each onto the Node.js module you are creating in as automated a fashion as possible. In this material, I will describe some patterns for dealing with data structures, pointers, and callbacks one needs to pass to the native library.
+This material is about creating Node.js interfaces for native libraries written in C. It is not so much about the mechanics of writing the code, or about the structure of a npm package containing a native addon, but about the various situations you are likely to face when writing addons. It starts with the assumption that it is best to create an addon that provides as little abstraction as possible so as to allow you to provide a Javascript API to the consumers of your project that is itself written in Javascript. The portion of the Node.js documentation that describes native addons, the V8 reference, and the reference provided by the Native Abstractions for Node ([NAN][]) project give you an ample toolset for creating native addons. Once you've managed to create your first native addon, and are ready to bring a complete native library into the Node.js world, you will be faced with having to translate the artifacts of the C language into Javascript concepts.  At that point, it pays to be systematic. It is beneficial to break the library's API into precompiler constants, enums, structures, and functions, and bind each onto the Node.js module you are creating in as automated a fashion as possible. In this material, I will describe some patterns for dealing with data structures, pointers, and callbacks one needs to pass to the native library.
 
 # Assumption
 
@@ -55,6 +55,10 @@ Nevertheless, the underlying language has artifacts that need not be mapped.
     ```
 
 # Situations
+
+## What can be automated?
+
+Precompiler constants and enums can be parsed from the headers. You might even use a script written in Javascript, although I have found that awk is particularly good at text processing. The important consideration is that unlike structures and functions, precompiler constants and enums *can* be attached automatically to the addon.
 
 ## The easy case
 
