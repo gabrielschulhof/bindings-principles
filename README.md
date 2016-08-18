@@ -92,8 +92,8 @@ double x_radius = maybeXRadius.FromJust();
 You can certainly incorporate this additional check in your bindings. I haven't done so yet ☺
 
 ## Data
-This is any kind of data that does not fit into a primitive value that the language can handle directly. The distinction from primitive types is that now we're dealing with pointers. There are many ways in which data can be dealt with, so let's break up the use cases and look at each in turn.
-  0. The structure. This is a pointer to a well-known structure into which the bindings can decend and from which they can construct a Javascript object. The structure is either passed to the native library or the native library may return it.
+This is any kind of data that does not fit into a primitive value that the language can handle directly. The distinction from primitive types is that on the native side now we're dealing with pointers. There are many ways in which data can be dealt with, so let's break up the use cases and look at each in turn.
+  0. The structure. This is a pointer to a well-known structure which the bindings can traverse and from which they can construct a Javascript object. The structure is either passed to the native library or the native library may return it.
   0. The handle. This is a "magic" pointer that is usually bookended by two API calls - one to create it, and one to destroy it.
 
 ### The simple case - a transparent structure
@@ -204,7 +204,7 @@ Before diving into the process of passing a handle into Javascript we should con
   var x = setTimeout( function() {}, 1000 );
   x = null;
   ```
-  If we overwrite all references to the "magic" value, we have no way of removing the timeout. In terms of memory management this is not a big poblem in the case of a timeout, because its semantics are such that it will simply run once and then be removed implicitly. However, in the case of ```setInterval()```, overwriting the return value of the function means that the interval has now leaked, and its callback will be called repeatedly "forever", keeping the memory allocated for it in place. Javascript follows this important heuristic and so, although V8 allows us to intercept a Javascript value as it is garbage-collected via weak references, our code that deals with handles can also be made easier: *If the handle goes out of scope before it is released, the resource to which it refers is leaked.*
+  If we overwrite all references to the "magic" value, we have no way of removing the timeout. In terms of memory management this is not a big poblem in the case of a timeout, because its semantics are such that it will simply run once and then be removed implicitly. However, in the case of ```setInterval()```, overwriting the return value of the function means that the interval has now leaked, and its callback will be called repeatedly "forever", keeping the memory allocated for it in place. Javascript follows this important heuristic and so, although V8 allows us to intercept a Javascript value as it is garbage-collected via weak references, our code that deals with handles can also be made 		easier: *If the handle goes out of scope before it is released, the resource to which it refers is leaked.*
 
 Armed with these heuristics, let's create our own handles with the help of NAN:<a name="handle-class-template"></a>
 ```C++
@@ -338,7 +338,7 @@ Local<Value> arguments[2] = {
 };
 jsCallback->Call(arguments, 2);
 ```
-The first argument to the Javascript callback is a handle we have created for this one function call. However, conceptually, the c_handle is the same as the one for which we have previously created a Javascript wrapper. This is bad. We have just created a second Javascript handle containing the same "magic" pointer as the one we passed into Javascript land during our binding of ```remote_resource_retrieve()```. The reason this is bad is that when the Javascript code invalidates one of the handles, the underlying C API in turn invalidates its own handle. However, we still have a copy of the now stale handle in a second Javascript handle which remains perfectly valid. This introduces a discrepancy between the state of the bindings and the state of the C library.
+The first argument to the Javascript callback is a handle we have created for this one function call. However, conceptually, ```c_handle``` is the same as the one for which we have previously created a Javascript wrapper. This is bad. We have just created a second Javascript handle containing the same "magic" pointer as the one we passed into Javascript land during our binding of ```remote_resource_retrieve()```. The reason this is bad is that when the Javascript code invalidates one of the handles, the underlying C API in turn invalidates its own handle. However, we still have a copy of the now stale handle in a second Javascript handle which remains perfectly valid. This introduces a discrepancy between the state of the bindings and the state of the C library.
 
 The way around this is to create a persistent reference to the Javascript handle in our binding for ```remote_resource_set_int_async()``` and pass it, along with the ```Nan::Callback```, which is a persistent reference to the Javascript function that we must call (```jsCallback``` in the example above), as the ```void *data``` parameter of the native callback. Read more about this in the <a href="#callbacks">callbacks</a> section.
 
