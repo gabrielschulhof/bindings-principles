@@ -161,7 +161,7 @@ You can maximize code reuse and increase the readability of the ```c_<structuren
     }
 ```
 
-### The complex case - handles
+### The complex case - <a name="handles"></a>handles
 
 In this case the underlying API gives you a "magic" pointer that identifies a resource the API maintains internally. The actual structure associated with the pointer type may or may not be opaque, but the value of the pointer is important. Note that by its very nature, such an API has to provide at least two functions: one for obtaining the "magic" pointer, and one for informing the API that it is no longer needed and may be disposed of. Here's an example API:
 
@@ -448,7 +448,7 @@ FileSystemWatch watch_file_name(const char *file_name,
 bool unwatch_file_name(FileSystemWatch watch);
 ```
 
-A variation of this API is one where the callback returns a boolean value to indicate to the native library whether it should keep calling it or whether it should release the resources associated with calling it.
+A variation of this API is one where the callback returns a specific value to indicate to the native library whether it should keep calling it or whether it should release the resources associated with calling it.
 
 ```C
 FileSystemWatch watch_file_name(const char *file_name,
