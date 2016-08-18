@@ -9,7 +9,30 @@ It is best to write as little logic as possible into the bindings themselves. Id
 Nevertheless, the underlying language has artifacts that need not be mapped.
 
   0. For example, C has ```void *user_data``` with its function pointers, but that's only to provide room for context. Javascript is the king of context, so you don't need to map this mechanism into Javascript. OTOH, you need this mechanism for the <a href="#callbacks">internals of the bindings</a>.
-  0. Another example is pointers that are filled out by the native side. In that case you can have the binding accept an empty object the properties of which it fills out (a receptacle) or you can return a new object you create inside the binding. But what if the native function additionally returns a result code (like ```errno``` for example)? Do you retain one-to-one-ness and use a receptacle object or do you break one-to-one-ness and return an object upon success and an error code otherwise? Do you throw the error code as an exception (again, breaking one-to-one-ness)? Your call.
+  0. C also doesn't have a concept of variable-length arrays. Thus, many APIs that accept variable-length arrays do so by accepting two parameters: a pointer to the data, and an integer indicating how many items are stored at the pointer. For example:
+    ```C
+    void draw_multi_line(point *points, size_t point_count);
+    ```
+    or
+    ```C
+    struct point_array {
+      point *points;
+      size_t point_count;
+    };
+    ```
+    Since Javascript has a native array type, it is unnecessary to write the bindings in such a way that you have to pass the lengths from Javascript to the binding, otherwise you invariably end up with
+    ```JS
+    myAddon.draw_multi_line(points, points.length);
+    ```
+    or
+    ```JS
+    {
+      points: points,
+      point_count: points.length
+    } 
+    ```
+    which is superfluous, since the array already conveys its length to the C++ bindings.
+  0. You might also consider pointers that are filled out by the native side. In that case you can have the binding accept an empty object the properties of which it fills out (a receptacle) or you can return a new object you create inside the binding. But what if the native function additionally returns a result code (like ```errno``` for example)? Do you retain one-to-one-ness and use a receptacle object or do you break one-to-one-ness and return an object upon success and an error code otherwise? Do you throw the error code as an exception (again, breaking one-to-one-ness)? Your call.
 
 # General principles
 
