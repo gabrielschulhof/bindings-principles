@@ -58,7 +58,7 @@ Nevertheless, the underlying language has artifacts that need not be mapped.
 
 ## What can be automated?
 
-Precompiler constants and enums can be parsed from the headers. You might even use a script written in Javascript, although I have found that awk is particularly good at text processing. The important consideration is that unlike structures and functions, precompiler constants and enums *can* be attached automatically to the addon.
+Precompiler constants and enums can be parsed from the headers. You might even use a script written in Javascript, although I have found that awk is particularly good at text processing. The important consideration is that unlike structures and functions, precompiler constants and enums *can* be attached automatically to the addon. For everything else, there's hard work ☺
 
 ## The easy case
 
